@@ -6,7 +6,8 @@ from notion_client import Client
 st.set_page_config(
     page_title="우리 결혼 준비",
     page_icon="💍",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 password = st.text_input(
@@ -20,6 +21,10 @@ if not password:
 if password != st.secrets["APP_PASSWORD"]:
     st.error("비밀번호가 올바르지 않습니다.")
     st.stop()
+
+if st.sidebar.button("🔄 데이터 새로고침"):
+    st.cache_data.clear()
+    st.rerun()
 
 notion = Client(auth=st.secrets["NOTION_TOKEN"])
 
@@ -61,7 +66,7 @@ def won(v):
     return f"{v:,.0f}원"
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def load_notion_db(db_id: str, db_name: str) -> pd.DataFrame:
     rows = []
     cursor = None

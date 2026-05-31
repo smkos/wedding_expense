@@ -150,6 +150,10 @@ def make_cumulative_df(df: pd.DataFrame) -> pd.DataFrame:
         ignore_index=True,
     )
 
+    event_by_date = event_by_date.drop_duplicates(
+        subset=["날짜", "이벤트"]
+    )
+
     if not event_by_date.empty:
         event_by_date = (
             event_by_date

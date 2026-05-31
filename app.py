@@ -9,6 +9,18 @@ st.set_page_config(
     layout="wide"
 )
 
+password = st.text_input(
+    "우리만 아는 비밀번호를 입력해주세요 🔒",
+    type="password"
+)
+
+if not password:
+    st.stop()
+
+if password != st.secrets["APP_PASSWORD"]:
+    st.error("비밀번호가 올바르지 않습니다.")
+    st.stop()
+
 notion = Client(auth=st.secrets["NOTION_TOKEN"])
 
 DBS = {

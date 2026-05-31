@@ -99,13 +99,17 @@ def load_notion_db(db_id: str, db_name: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def make_event_text(row):
+def make_expected_event_text(row):
     return (
         f"<b>{row['이름']}</b><br>"
-        f"예상: {won(row.get('예상금액'))}<br>"
-        f"실지출: {won(row.get('실지출금액'))}"
+        f"예상: {won(row.get('예상금액'))}"
     )
 
+def make_actual_event_text(row):
+    return (
+        f"<b>{row['이름']}</b><br>"
+        f"실지출: {won(row.get('실지출금액'))}"
+    )
 
 def make_cumulative_df(df: pd.DataFrame) -> pd.DataFrame:
     expected = df[["예상지출날짜", "예상금액"]].copy()
@@ -136,32 +140,44 @@ def make_cumulative_df(df: pd.DataFrame) -> pd.DataFrame:
 
     expected_events = events.dropna(subset=["예상지출날짜"]).copy()
     expected_events["날짜"] = expected_events["예상지출날짜"]
-    expected_events["이벤트"] = expected_events.apply(make_event_text, axis=1)
+    expected_events["구분"] = "예상 지출"
+    expected_events["이벤트"] = expected_events.apply(
+        make_expected_event_text,
+        axis=1,
+    )
 
     actual_events = events.dropna(subset=["지출날짜"]).copy()
     actual_events["날짜"] = actual_events["지출날짜"]
-    actual_events["이벤트"] = actual_events.apply(make_event_text, axis=1)
+    actual_events["구분"] = "실지출"
+    actual_events["이벤트"] = actual_events.apply(
+        make_actual_event_text,
+        axis=1,
+    )
 
     event_by_date = pd.concat(
         [
-            expected_events[["날짜", "이벤트"]],
-            actual_events[["날짜", "이벤트"]],
+            expected_events[["날짜", "구분", "이벤트"]],
+            actual_events[["날짜", "구분", "이벤트"]],
         ],
         ignore_index=True,
     )
 
     event_by_date = event_by_date.drop_duplicates(
-        subset=["날짜", "이벤트"]
+        subset=["날짜", "구분", "이벤트"]
     )
 
     if not event_by_date.empty:
         event_by_date = (
             event_by_date
-            .groupby("날짜", as_index=False)["이벤트"]
+            .groupby(["날짜", "구분"], as_index=False)["이벤트"]
             .agg(lambda s: "<br><br>".join(s))
         )
 
-        daily = daily.merge(event_by_date, on="날짜", how="left")
+        daily = daily.merge(
+            event_by_date,
+            on=["날짜", "구분"],
+            how="left",
+        )
     else:
         daily["이벤트"] = ""
 
@@ -177,43 +193,97 @@ def draw_chart(df: pd.DataFrame, title: str):
         st.warning(f"{title}: 그래프를 그릴 데이터가 없습니다.")
         return
 
+    pivot = daily.pivot_table(
+        index="날짜",
+        columns="구분",
+        values="누적지출금액",
+        aggfunc="last",
+    ).sort_index()
+
+    pivot = pivot.ffill().fillna(0).reset_index()
+
+    event_pivot = daily.pivot_table(
+        index="날짜",
+        columns="구분",
+        values="이벤트",
+        aggfunc="first",
+    ).reset_index()
+
+    hover_df = pivot.merge(event_pivot, on="날짜", suffixes=("", "_이벤트"))
+    hover_df = hover_df.sort_values("날짜")
+
     fig = go.Figure()
 
-    line_styles = {
-        "예상 지출": {
-            "color": "rgba(220, 80, 80, 0.75)",
-            "dash": "dash",
-        },
-        "실지출": {
-            "color": "rgba(60, 120, 220, 0.9)",
-            "dash": "solid",
-        },
-    }
+    expected_df = daily[daily["구분"] == "예상 지출"]
+    actual_df = daily[daily["구분"] == "실지출"]
 
-    for name in ["예상 지출", "실지출"]:
-        line_df = daily[daily["구분"] == name]
-
-        fig.add_trace(
-            go.Scatter(
-                x=line_df["날짜"],
-                y=line_df["누적지출금액"],
-                mode="lines+markers",
-                name=name,
-                customdata=line_df[["이벤트"]],
-                line=dict(
-                    color=line_styles[name]["color"],
-                    dash=line_styles[name]["dash"],
-                    width=3,
-                ),
-                marker=dict(size=8),
-                hovertemplate=(
-                    "날짜: %{x|%Y-%m-%d}<br>"
-                    f"{name} 누적: %{{y:,.0f}}원<br><br>"
-                    "이벤트:<br>%{customdata[0]}"
-                    "<extra></extra>"
-                ),
-            )
+    fig.add_trace(
+        go.Scatter(
+            x=expected_df["날짜"],
+            y=expected_df["누적지출금액"],
+            mode="lines+markers",
+            name="예상 지출",
+            line=dict(
+                color="rgba(220, 80, 80, 0.75)",
+                dash="dash",
+                width=3,
+            ),
+            marker=dict(size=8),
+            hoverinfo="skip",
         )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=actual_df["날짜"],
+            y=actual_df["누적지출금액"],
+            mode="lines+markers",
+            name="실지출",
+            line=dict(
+                color="rgba(60, 120, 220, 0.9)",
+                dash="solid",
+                width=3,
+            ),
+            marker=dict(size=8),
+            hoverinfo="skip",
+        )
+    )
+
+    for col in ["예상 지출", "실지출"]:
+        if col not in hover_df.columns:
+            hover_df[col] = pd.NA
+
+    for col in ["예상 지출_이벤트", "실지출_이벤트"]:
+        if col not in hover_df.columns:
+            hover_df[col] = ""
+
+    hover_df["hover_text"] = (
+        "<span style='color:#dc5050'>●</span> "
+        "예상 지출 누적: "
+        + hover_df["예상 지출"].apply(won)
+        + "<br>"
+        + "<span style='color:#3c78dc'>●</span> "
+        "실지출 누적: "
+        + hover_df["실지출"].apply(won)
+        + "<br><br>"
+        + "<b>예상 지출</b><br>"
+        + hover_df["예상 지출_이벤트"].fillna("")
+        + "<br><br>"
+        + "<b>실지출</b><br>"
+        + hover_df["실지출_이벤트"].fillna("")
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=hover_df["날짜"],
+            y=hover_df[["예상 지출", "실지출"]].fillna(0).max(axis=1),
+            mode="markers",
+            marker=dict(size=20, opacity=0),
+            showlegend=False,
+            hovertemplate="%{customdata}<extra></extra>",
+            customdata=hover_df["hover_text"],
+        )
+    )
 
     today = pd.Timestamp.today().normalize()
     x_max = daily["날짜"].max()
@@ -243,7 +313,7 @@ def draw_chart(df: pd.DataFrame, title: str):
         title=dict(text=title, font=dict(size=24)),
         xaxis_title="날짜",
         yaxis_title="누적 지출 금액",
-        hovermode="x unified",
+        hovermode="x",
         font=dict(size=16),
         legend=dict(font=dict(size=15)),
     )
@@ -251,7 +321,7 @@ def draw_chart(df: pd.DataFrame, title: str):
     fig.update_xaxes(title_font=dict(size=18), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=18), tickfont=dict(size=14), tickformat=",")
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 st.title("결혼 준비 비용 대시보드")
@@ -276,4 +346,4 @@ for db_name, df in all_dfs.items():
     draw_chart(df, db_name)
 
     with st.expander(f"{db_name} 원본 데이터 보기"):
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width="stretch")
